@@ -10,9 +10,18 @@ from os import path as osp
 from tqdm import tqdm
 import bs4
 from bs4 import BeautifulSoup as bs
-from transformers.tokenization_bert import BasicTokenizer, whitespace_tokenize
+from transformers import BasicTokenizer
 
 logger = logging.getLogger(__name__)
+
+
+def whitespace_tokenize(text):
+    """Runs basic whitespace cleaning and splitting on a piece of text."""
+    text = text.strip()
+    if not text:
+        return []
+    tokens = text.split()
+    return tokens
 
 
 class SRCExample(object):
@@ -400,6 +409,192 @@ def read_wrc_examples(input_file, root_dir, is_training, tokenizer, method, simp
                         tok_to_tags_index=tok_to_tags_index,
                     )
                     examples.append(example)
+    return examples, all_tag_list
+
+
+def read_simple_examples(input_file, root_dir, tokenizer, method):
+    with open(input_file, "r", encoding='utf-8') as reader:
+        input_data = json.load(reader)["data"]
+
+    def is_whitespace(c):
+        if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
+            return True
+        return False
+
+    def html_to_text_list(h):
+        tag_num, text_list = 0, []
+        for element in h.descendants:
+            if (type(element) == bs4.element.NavigableString) and (element.strip()):
+                text_list.append(element.strip())
+            if type(element) == bs4.element.Tag:
+                tag_num += 1
+        return text_list, tag_num + 2  # + 2 because we treat the additional 'yes' and 'no' as two special tags.
+
+    def html_to_text(h):
+        """
+        return the escaped html string and the tag set
+        """
+        tag_list = set()
+        for element in h.descendants:
+            if type(element) == bs4.element.Tag:
+                element.attrs = {}
+                temp = str(element).split()
+                tag_list.add(temp[0])
+                tag_list.add(temp[-1])
+        return html_escape(str(h)), tag_list
+
+    def adjust_offset(offset, text):
+        text_list = text.split()
+        cnt, adjustment = 0, []
+        for t in text_list:
+            if not t:
+                continue
+            if t[0] == '<' and t[-1] == '>':
+                adjustment.append(offset.index(cnt))
+            else:
+                cnt += 1
+        add = 0
+        adjustment.append(len(offset))
+        for i in range(len(offset)):
+            while i >= adjustment[add]:
+                add += 1
+            offset[i] += add
+        return offset
+
+    def word_to_tag_from_text(tokens, h):
+        cnt, w_t, path = -1, [], []
+        for t in tokens[0:-2]:
+            if len(t) < 2:
+                w_t.append(path[-1])
+                continue
+            if t[0] == '<' and t[-2] == '/':
+                cnt += 1
+                w_t.append(cnt)
+                continue
+            if t[0] == '<' and t[1] != '/':
+                cnt += 1
+                path.append(cnt)
+            w_t.append(path[-1])
+            if t[0] == '<' and t[1] == '/':
+                del path[-1]
+        w_t.append(cnt + 1)
+        w_t.append(cnt + 2)
+        assert len(w_t) == len(tokens)
+        assert len(path) == 0, print(h)
+        return w_t
+
+    def word_tag_offset(html):
+        cnt, w_t, t_w, tags, tags_tids = 0, [], [], [], []
+        for element in html.descendants:
+            if type(element) == bs4.element.Tag:
+                content = ' '.join(list(element.strings)).split()
+                t_w.append({'start': cnt, 'len': len(content)})
+                tags.append('<' + element.name + '>')
+                tags_tids.append(element['tid'])
+            elif type(element) == bs4.element.NavigableString and element.strip():
+                text = element.split()
+                tid = element.parent['tid']
+                ind = tags_tids.index(tid)
+                for _ in text:
+                    w_t.append(ind)
+                    cnt += 1
+                assert cnt == len(w_t)
+        w_t.append(len(t_w))
+        w_t.append(len(t_w) + 1)
+        return w_t
+
+    def subtoken_tag_offset(html, s_tok):
+        w_t = word_tag_offset(html)
+        s_t = []
+        for i in range(len(s_tok)):
+            s_t.append(w_t[s_tok[i]])
+        return s_t
+
+    examples = []
+    all_tag_list = set()
+    for entry in input_data:
+        domain = entry["domain"]
+        for website in entry["websites"]:
+
+            # Generate Doc Tokens
+            page_id = website["page_id"]
+            curr_dir = osp.join(root_dir, domain, page_id[0:2], 'processed_data')
+            html_file = open(osp.join(curr_dir, page_id + '.html')).read()
+            html_code = bs(html_file)
+            raw_text_list, tag_num = html_to_text_list(html_code)
+            page_text = ' '.join(raw_text_list)
+            doc_tokens = []
+            char_to_word_offset = []
+            prev_is_whitespace = True
+            for c in page_text:
+                if is_whitespace(c):
+                    prev_is_whitespace = True
+                else:
+                    if prev_is_whitespace:
+                        doc_tokens.append(c)
+                    else:
+                        doc_tokens[-1] += c
+                    prev_is_whitespace = False
+                char_to_word_offset.append(len(doc_tokens) - 1)
+            doc_tokens.append('no')
+            char_to_word_offset.append(len(doc_tokens) - 1)
+            doc_tokens.append('yes')
+            char_to_word_offset.append(len(doc_tokens) - 1)
+            if method != "T-PLM":
+                real_text, tag_list = html_to_text(bs(html_file))
+                all_tag_list = all_tag_list | tag_list
+                char_to_word_offset = adjust_offset(char_to_word_offset, real_text)
+                doc_tokens = real_text.split()
+                doc_tokens.append('no')
+                doc_tokens.append('yes')
+                doc_tokens = [i for i in doc_tokens if i]
+                assert len(doc_tokens) == char_to_word_offset[-1] + 1, (len(doc_tokens), char_to_word_offset[-1])
+            else:
+                tag_list = []
+
+            # Tokenize all doc tokens
+            tok_to_orig_index = []
+            orig_to_tok_index = []
+            all_doc_tokens = []
+            for (i, token) in enumerate(doc_tokens):
+                orig_to_tok_index.append(len(all_doc_tokens))
+                if token in tag_list:
+                    sub_tokens = [token]
+                else:
+                    sub_tokens = tokenizer.tokenize(token)
+                for sub_token in sub_tokens:
+                    tok_to_orig_index.append(i)
+                    all_doc_tokens.append(sub_token)
+
+            # Generate extra information for features
+            if method != "T-PLM":
+                tok_to_tags_index = word_to_tag_from_text(all_doc_tokens, html_code)
+            else:
+                tok_to_tags_index = subtoken_tag_offset(html_code, tok_to_orig_index)
+            assert tok_to_tags_index[-1] == tag_num - 1, (tok_to_tags_index[-1], tag_num - 1)
+
+            # Process each qas, which is mainly calculate the answer position
+            for qa in website["qas"]:
+                qas_id = qa["id"]
+                question_text = qa["question"]
+                start_position = None
+                end_position = None
+                orig_answer_text = None
+                example = SRCExample(
+                    doc_tokens=doc_tokens,
+                    qas_id=qas_id,
+                    tag_num=tag_num,
+                    question_text=question_text,
+                    html_code=html_code,
+                    orig_answer_text=orig_answer_text,
+                    start_position=start_position,
+                    end_position=end_position,
+                    tok_to_orig_index=tok_to_orig_index,
+                    orig_to_tok_index=orig_to_tok_index,
+                    all_doc_tokens=all_doc_tokens,
+                    tok_to_tags_index=tok_to_tags_index,
+                )
+                examples.append(example)
     return examples, all_tag_list
 
 

@@ -2,7 +2,7 @@ import os
 
 import torch
 import torch.nn as nn
-from transformers.modeling_bert import BertAttention, BertPreTrainedModel
+from transformers.models.bert.modeling_bert import BertAttention, BertPreTrainedModel
 from transformers import PretrainedConfig
 from torch.utils.data import Dataset
 import numpy as np
