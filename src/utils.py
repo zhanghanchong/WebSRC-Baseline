@@ -412,10 +412,7 @@ def read_wrc_examples(input_file, root_dir, is_training, tokenizer, method, simp
     return examples, all_tag_list
 
 
-def read_simple_examples(input_file, root_dir, tokenizer, method):
-    with open(input_file, "r", encoding='utf-8') as reader:
-        input_data = json.load(reader)["data"]
-
+def read_simple_examples(question, html_file, tokenizer, method):
     def is_whitespace(c):
         if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
             return True
@@ -511,91 +508,81 @@ def read_simple_examples(input_file, root_dir, tokenizer, method):
         return s_t
 
     examples = []
-    all_tag_list = set()
-    for entry in input_data:
-        domain = entry["domain"]
-        for website in entry["websites"]:
 
-            # Generate Doc Tokens
-            page_id = website["page_id"]
-            curr_dir = osp.join(root_dir, domain, page_id[0:2], 'processed_data')
-            html_file = open(osp.join(curr_dir, page_id + '.html')).read()
-            html_code = bs(html_file)
-            raw_text_list, tag_num = html_to_text_list(html_code)
-            page_text = ' '.join(raw_text_list)
-            doc_tokens = []
-            char_to_word_offset = []
+    # Generate Doc Tokens
+    html_code = bs(html_file)
+    raw_text_list, tag_num = html_to_text_list(html_code)
+    page_text = ' '.join(raw_text_list)
+    doc_tokens = []
+    char_to_word_offset = []
+    prev_is_whitespace = True
+    for c in page_text:
+        if is_whitespace(c):
             prev_is_whitespace = True
-            for c in page_text:
-                if is_whitespace(c):
-                    prev_is_whitespace = True
-                else:
-                    if prev_is_whitespace:
-                        doc_tokens.append(c)
-                    else:
-                        doc_tokens[-1] += c
-                    prev_is_whitespace = False
-                char_to_word_offset.append(len(doc_tokens) - 1)
-            doc_tokens.append('no')
-            char_to_word_offset.append(len(doc_tokens) - 1)
-            doc_tokens.append('yes')
-            char_to_word_offset.append(len(doc_tokens) - 1)
-            if method != "T-PLM":
-                real_text, tag_list = html_to_text(bs(html_file))
-                all_tag_list = all_tag_list | tag_list
-                char_to_word_offset = adjust_offset(char_to_word_offset, real_text)
-                doc_tokens = real_text.split()
-                doc_tokens.append('no')
-                doc_tokens.append('yes')
-                doc_tokens = [i for i in doc_tokens if i]
-                assert len(doc_tokens) == char_to_word_offset[-1] + 1, (len(doc_tokens), char_to_word_offset[-1])
+        else:
+            if prev_is_whitespace:
+                doc_tokens.append(c)
             else:
-                tag_list = []
+                doc_tokens[-1] += c
+            prev_is_whitespace = False
+        char_to_word_offset.append(len(doc_tokens) - 1)
+    doc_tokens.append('no')
+    char_to_word_offset.append(len(doc_tokens) - 1)
+    doc_tokens.append('yes')
+    char_to_word_offset.append(len(doc_tokens) - 1)
+    if method != "T-PLM":
+        real_text, tag_list = html_to_text(bs(html_file))
+        char_to_word_offset = adjust_offset(char_to_word_offset, real_text)
+        doc_tokens = real_text.split()
+        doc_tokens.append('no')
+        doc_tokens.append('yes')
+        doc_tokens = [i for i in doc_tokens if i]
+        assert len(doc_tokens) == char_to_word_offset[-1] + 1, (len(doc_tokens), char_to_word_offset[-1])
+    else:
+        tag_list = []
 
-            # Tokenize all doc tokens
-            tok_to_orig_index = []
-            orig_to_tok_index = []
-            all_doc_tokens = []
-            for (i, token) in enumerate(doc_tokens):
-                orig_to_tok_index.append(len(all_doc_tokens))
-                if token in tag_list:
-                    sub_tokens = [token]
-                else:
-                    sub_tokens = tokenizer.tokenize(token)
-                for sub_token in sub_tokens:
-                    tok_to_orig_index.append(i)
-                    all_doc_tokens.append(sub_token)
+    # Tokenize all doc tokens
+    tok_to_orig_index = []
+    orig_to_tok_index = []
+    all_doc_tokens = []
+    for (i, token) in enumerate(doc_tokens):
+        orig_to_tok_index.append(len(all_doc_tokens))
+        if token in tag_list:
+            sub_tokens = [token]
+        else:
+            sub_tokens = tokenizer.tokenize(token)
+        for sub_token in sub_tokens:
+            tok_to_orig_index.append(i)
+            all_doc_tokens.append(sub_token)
 
-            # Generate extra information for features
-            if method != "T-PLM":
-                tok_to_tags_index = word_to_tag_from_text(all_doc_tokens, html_code)
-            else:
-                tok_to_tags_index = subtoken_tag_offset(html_code, tok_to_orig_index)
-            assert tok_to_tags_index[-1] == tag_num - 1, (tok_to_tags_index[-1], tag_num - 1)
+    # Generate extra information for features
+    if method != "T-PLM":
+        tok_to_tags_index = word_to_tag_from_text(all_doc_tokens, html_code)
+    else:
+        tok_to_tags_index = subtoken_tag_offset(html_code, tok_to_orig_index)
+    assert tok_to_tags_index[-1] == tag_num - 1, (tok_to_tags_index[-1], tag_num - 1)
 
-            # Process each qas, which is mainly calculate the answer position
-            for qa in website["qas"]:
-                qas_id = qa["id"]
-                question_text = qa["question"]
-                start_position = None
-                end_position = None
-                orig_answer_text = None
-                example = SRCExample(
-                    doc_tokens=doc_tokens,
-                    qas_id=qas_id,
-                    tag_num=tag_num,
-                    question_text=question_text,
-                    html_code=html_code,
-                    orig_answer_text=orig_answer_text,
-                    start_position=start_position,
-                    end_position=end_position,
-                    tok_to_orig_index=tok_to_orig_index,
-                    orig_to_tok_index=orig_to_tok_index,
-                    all_doc_tokens=all_doc_tokens,
-                    tok_to_tags_index=tok_to_tags_index,
-                )
-                examples.append(example)
-    return examples, all_tag_list
+    # Process each qas, which is mainly calculate the answer position
+    qas_id = ''
+    start_position = None
+    end_position = None
+    orig_answer_text = None
+    example = SRCExample(
+        doc_tokens=doc_tokens,
+        qas_id=qas_id,
+        tag_num=tag_num,
+        question_text=question,
+        html_code=html_code,
+        orig_answer_text=orig_answer_text,
+        start_position=start_position,
+        end_position=end_position,
+        tok_to_orig_index=tok_to_orig_index,
+        orig_to_tok_index=orig_to_tok_index,
+        all_doc_tokens=all_doc_tokens,
+        tok_to_tags_index=tok_to_tags_index,
+    )
+    examples.append(example)
+    return examples
 
 
 def convert_examples_to_features(examples, tokenizer, max_seq_length, doc_stride, max_query_length, is_training,
@@ -973,6 +960,147 @@ def write_predictions(all_examples, all_features, all_results, n_best_size, max_
     with open(output_tag_prediction_file, 'w') as writer:
         writer.write(json.dumps(all_tag_predictions, indent=4) + '\n')
     return
+
+
+def write_simple_predictions(all_examples, all_features, all_results, n_best_size, max_answer_length, do_lower_case,
+                                verbose_logging):
+    example_index_to_features = collections.defaultdict(list)
+    for feature in all_features:
+        example_index_to_features[feature.example_index].append(feature)
+
+    unique_id_to_result = {}
+    for result in all_results:
+        unique_id_to_result[result.unique_id] = result
+
+    _PrelimPrediction = collections.namedtuple(  # pylint: disable=invalid-name
+        "PrelimPrediction",
+        ["feature_index", "start_index", "end_index", "start_logit", "end_logit", "tag_ids"])
+
+    all_predictions = collections.OrderedDict()
+    all_tag_predictions = collections.OrderedDict()
+    all_nbest_json = collections.OrderedDict()
+
+    for (example_index, example) in enumerate(all_examples):
+        features = example_index_to_features[example_index]
+
+        prelim_predictions = []
+        for (feature_index, feature) in enumerate(features):
+            result = unique_id_to_result[feature.unique_id]
+            start_indexes = _get_best_indexes(result.start_logits, n_best_size)
+            end_indexes = _get_best_indexes(result.end_logits, n_best_size)
+            # if we could have irrelevant answers, get the min score of irrelevant
+            for start_index in start_indexes:
+                for end_index in end_indexes:
+                    # We could hypothetically create invalid predictions, e.g., predict
+                    # that the start of the span is in the question. We throw out all
+                    # invalid predictions.
+                    if start_index >= len(feature.tokens):
+                        continue
+                    if end_index >= len(feature.tokens):
+                        continue
+                    if start_index not in feature.token_to_orig_map:
+                        continue
+                    if end_index not in feature.token_to_orig_map:
+                        continue
+                    if not feature.token_is_max_context.get(start_index, False):
+                        continue
+                    if end_index < start_index:
+                        continue
+                    length = end_index - start_index + 1
+                    if length > max_answer_length:
+                        continue
+                    tag_ids = set(feature.token_to_tag_index[start_index: end_index + 1])
+                    prelim_predictions.append(
+                        _PrelimPrediction(
+                            feature_index=feature_index,
+                            start_index=start_index,
+                            end_index=end_index,
+                            start_logit=result.start_logits[start_index],
+                            end_logit=result.end_logits[end_index],
+                            tag_ids=list(tag_ids)))
+        prelim_predictions = sorted(
+            prelim_predictions,
+            key=lambda x: (x.start_logit + x.end_logit),
+            reverse=True)
+
+        _NbestPrediction = collections.namedtuple(  # pylint: disable=invalid-name
+            "NbestPrediction", ["text", "start_logit", "end_logit", "tag_ids"])
+
+        seen_predictions = {}
+        nbest = []
+        for pred in prelim_predictions:
+            if len(nbest) >= n_best_size:
+                break
+            feature = features[pred.feature_index]
+            if pred.start_index > 0:  # this is a non-null prediction
+                tok_tokens = feature.tokens[pred.start_index:(pred.end_index + 1)]
+                orig_doc_start = feature.token_to_orig_map[pred.start_index]
+                orig_doc_end = feature.token_to_orig_map[pred.end_index]
+                orig_tokens = example.doc_tokens[orig_doc_start:(orig_doc_end + 1)]
+                tok_text = " ".join(tok_tokens)
+
+                # De-tokenize WordPieces that have been split off.
+                tok_text = tok_text.replace(" ##", "")
+                tok_text = tok_text.replace("##", "")
+
+                # Clean whitespace
+                tok_text = tok_text.strip()
+                tok_text = " ".join(tok_text.split())
+                orig_text = " ".join(orig_tokens)
+
+                final_text = _get_final_text(tok_text, orig_text, do_lower_case, verbose_logging)
+                if final_text in seen_predictions:
+                    continue
+
+                seen_predictions[final_text] = True
+            else:
+                final_text = ""
+                seen_predictions[final_text] = True
+
+            nbest.append(
+                _NbestPrediction(
+                    text=final_text,
+                    start_logit=pred.start_logit,
+                    end_logit=pred.end_logit,
+                    tag_ids=pred.tag_ids))
+
+        # In very rare edge cases we could have no valid predictions. So we
+        # just create a nonce prediction in this case to avoid failure.
+        if not nbest:
+            nbest.append(
+                _NbestPrediction(text="empty", start_logit=0.0, end_logit=0.0, tag_ids=[-1]))
+
+        assert len(nbest) >= 1
+
+        total_scores = []
+        best_non_null_entry = None
+        for entry in nbest:
+            total_scores.append(entry.start_logit + entry.end_logit)
+            if not best_non_null_entry:
+                if entry.text:
+                    best_non_null_entry = entry
+
+        probs = _compute_softmax(total_scores)
+
+        nbest_json = []
+        for (i, entry) in enumerate(nbest):
+            output = collections.OrderedDict()
+            output["text"] = entry.text
+            output["probability"] = probs[i]
+            output["start_logit"] = entry.start_logit
+            output["end_logit"] = entry.end_logit
+            output["tag_ids"] = entry.tag_ids
+            nbest_json.append(output)
+
+        assert len(nbest_json) >= 1
+
+        best = nbest_json[0]["text"].split()
+        best = ' '.join([w for w in best if w[0] != '<' or w[-1] != '>'])
+        all_predictions[example.qas_id] = best
+        all_tag_predictions[example.qas_id] = nbest_json[0]["tag_ids"]
+        all_nbest_json[example.qas_id] = nbest_json
+
+    return all_predictions[''], all_tag_predictions['']
 
 
 def _get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):
