@@ -71,8 +71,8 @@ def get_pos_score(gold, addition, pred, html_code):
     return len(p_gold & p_pred) / len(p_gold | p_pred)
 
 
-os.chdir(os.path.dirname(__file__))
-time.sleep(30)
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+time.sleep(60)
 http = urllib3.PoolManager(timeout=10)
 count_data, exact_score, f1_score, pos_score = 0, 0, 0, 0
 for root, _, filenames in os.walk('./data'):

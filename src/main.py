@@ -25,7 +25,7 @@ from model import VConfig, VPLM, StrucDataset
 from utils import (read_simple_examples, convert_examples_to_features, RawResult, write_simple_predictions)
 from utils_evaluate import EvalOpts, main as evaluate_on_wrc
 
-os.chdir(os.path.dirname(__file__))
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger(__name__)
 
 
