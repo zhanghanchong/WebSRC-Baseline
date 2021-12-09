@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -335,11 +336,14 @@ app = Flask(__name__)
 
 @app.route('/infer', methods=['POST'])
 def infer():
-    question = request.form['question']
     html_code = request.form['htmlCode']
-    metadata = request.form['metadata']
     screenshot = request.form['screenshot']
+    metadata = request.form['metadata']
+    question = request.form['question']
+    with open('screenshot.png', 'wb') as file:
+        file.write(base64.b64decode(screenshot))
     answer, tag = evaluate(args, model, tokenizer, question, html_code)
+    os.remove('screenshot.png')
     return json.dumps({'answer': answer, 'tag': tag})
 
 

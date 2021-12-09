@@ -1,3 +1,4 @@
+import base64
 import collections
 import csv
 import json
@@ -71,7 +72,7 @@ def get_pos_score(gold, addition, pred, html_code):
 
 
 os.chdir(os.path.dirname(__file__))
-# time.sleep(30)
+time.sleep(30)
 http = urllib3.PoolManager(timeout=10)
 count_data, exact_score, f1_score, pos_score = 0, 0, 0, 0
 for root, _, filenames in os.walk('./data'):
@@ -87,16 +88,16 @@ for root, _, filenames in os.walk('./data'):
             page_id = question_info["id"][2:-5]
             with open(os.path.join(root, 'processed_data', f'{page_id}.html')) as file:
                 html_code = file.read()
+            with open(os.path.join(root, 'processed_data', f'{page_id}.png'), 'rb') as file:
+                screenshot = base64.b64encode(file.read())
             with open(os.path.join(root ,'processed_data', f'{page_id}.json')) as file:
                 metadata = file.read()
-            with open(os.path.join(root, 'processed_data', f'{page_id}.png'), 'rb') as file:
-                screenshot = file.read()
             try:
                 response = http.request('POST', 'http://127.0.0.1:9000/infer', fields={
-                    'question': question_info['question'],
                     'htmlCode': html_code,
+                    'screenshot': screenshot,
                     'metadata': metadata,
-                    'screenshot': screenshot
+                    'question': question_info['question']
                 })
             except:
                 continue
