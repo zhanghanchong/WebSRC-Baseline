@@ -5,4 +5,4 @@ py -u -W ignore run.py                         ^
   --model_type bert --method H-PLM             ^
   --model_name_or_path bert-base-uncased       ^
   --output_dir result\H-PLM_bert\              ^
-  --do_lower_case --num_train_epochs 1 --no_cuda
+  --do_lower_case --num_train_epochs 10 --no_cuda

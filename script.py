@@ -79,8 +79,6 @@ for root, _, filenames in os.walk('./data'):
     for filename in filenames:
         if filename != 'dataset.csv':
             continue
-        if root[-2:] != '08':
-            continue
         with open(os.path.join(root, filename)) as file:
             questions_info = list(csv.DictReader(file))
         for question_info in questions_info:

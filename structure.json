@@ -1,0 +1,12 @@
+{
+    "request (form-data)": {
+        "htmlCode": "The HTML source code.",
+        "screenshot": "The base64-encoded PNG screenshot.",
+        "metadata": "The metadata for the screenshot.",
+        "question": "The question to be answered."
+    },
+    "response (json)": {
+        "answer": "The output answer text.",
+        "tag": "The output tag id."
+    }
+}

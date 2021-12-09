@@ -1113,7 +1113,7 @@ def write_simple_predictions(all_examples, all_features, all_results, n_best_siz
             p = p_pred
         else:
             p = p & p_pred
-    return all_predictions[''], max(p)
+    return all_predictions[''], (max(p) if len(p) > 0 else 2)
 
 
 def _get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):
