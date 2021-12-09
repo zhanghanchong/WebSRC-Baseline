@@ -963,7 +963,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size, max_
 
 
 def write_simple_predictions(all_examples, all_features, all_results, n_best_size, max_answer_length, do_lower_case,
-                                verbose_logging):
+                                verbose_logging, html_file):
     example_index_to_features = collections.defaultdict(list)
     for feature in all_features:
         example_index_to_features[feature.example_index].append(feature)
@@ -1100,7 +1100,20 @@ def write_simple_predictions(all_examples, all_features, all_results, n_best_siz
         all_tag_predictions[example.qas_id] = nbest_json[0]["tag_ids"]
         all_nbest_json[example.qas_id] = nbest_json
 
-    return all_predictions[''], all_tag_predictions['']
+    html_code = bs(html_file)
+    p = None
+    for tag_id in all_tag_predictions['']:
+        p_pred, e_pred = {tag_id}, html_code.find(tid=tag_id)
+        if e_pred is not None and e_pred.name != 'html':
+            for e in e_pred.parents:
+                if int(e['tid']) < 2:
+                    break
+                p_pred.add(int(e['tid']))
+        if p is None:
+            p = p_pred
+        else:
+            p = p & p_pred
+    return all_predictions[''], max(p)
 
 
 def _get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):

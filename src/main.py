@@ -46,7 +46,7 @@ def to_list(tensor):
     return tensor.detach().cpu().tolist()
 
 
-def evaluate(args, model, tokenizer, prefix, question, html_code):
+def evaluate(args, model, tokenizer, question, html_code):
     r"""
     Evaluate the model
     """
@@ -55,19 +55,15 @@ def evaluate(args, model, tokenizer, prefix, question, html_code):
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     # Note that DistributedSampler samples randomly
     eval_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=1)
 
     # multi-gpu evaluate
     if args.n_gpu > 1 and not isinstance(model, torch.nn.DataParallel):
         model = torch.nn.DataParallel(model)
 
     # Eval!
-    logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("  Num examples = %d", len(dataset))
-    logger.info("  Batch size = %d", args.eval_batch_size)
     all_results = []
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
@@ -90,7 +86,7 @@ def evaluate(args, model, tokenizer, prefix, question, html_code):
             all_results.append(result)
 
     return write_simple_predictions(examples, features, all_results, args.n_best_size, args.max_answer_length,
-                                    args.do_lower_case, args.verbose_logging)
+                                    args.do_lower_case, args.verbose_logging, html_code)
 
 
 def load_and_cache_examples(args, tokenizer, question, html_code):
@@ -123,17 +119,17 @@ def load_and_cache_examples(args, tokenizer, question, html_code):
 parser = argparse.ArgumentParser()
 
 # Required parameters
-parser.add_argument("--train_file", default="..\\data\\websrc1.0_train_.json", type=str,
+parser.add_argument("--train_file", default="../data/websrc1.0_train_.json", type=str,
                     help="json for training. E.g., train-v1.1.json")
-parser.add_argument("--predict_file", default="..\\data\\websrc1.0_dev_.json", type=str,
+parser.add_argument("--predict_file", default="../data/websrc1.0_dev_.json", type=str,
                     help="json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
-parser.add_argument("--root_dir", default="..\\data", type=str,
+parser.add_argument("--root_dir", default="../data", type=str,
                     help="the root directory of the raw WebSRC dataset, which contains the HTML files.")
 parser.add_argument("--model_type", default="bert", type=str,
                     help="Now support bert BERT and Electra models")
 parser.add_argument("--model_name_or_path", default="bert-base-uncased", type=str,
                     help="Path to pretrained model or model identifier from huggingface.co/models")
-parser.add_argument("--output_dir", default="result\\H-PLM_bert\\", type=str,
+parser.add_argument("--output_dir", default="result/H-PLM_bert/", type=str,
                     help="The output directory where the model checkpoints and predictions will be written.")
 parser.add_argument('--method', type=str, choices=["T-PLM", "H-PLM", "V-PLM"], default="H-PLM",
                     help="choose the baseline models from T-PLM, H-PLM, and V-PLM")
@@ -188,7 +184,7 @@ parser.add_argument('--eval_to_checkpoint', type=int, default=None,
 
 parser.add_argument("--per_gpu_train_batch_size", default=8, type=int,
                     help="Batch size per GPU/CPU for training.")
-parser.add_argument("--per_gpu_eval_batch_size", default=1, type=int,
+parser.add_argument("--per_gpu_eval_batch_size", default=8, type=int,
                     help="Batch size per GPU/CPU for evaluation.")
 parser.add_argument("--learning_rate", default=1e-5, type=float,
                     help="The initial learning rate for Adam.")
@@ -325,11 +321,6 @@ else:
 
 checkpoint = checkpoints[0]
 # Reload the model
-global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
-try:
-    int(global_step)
-except ValueError:
-    global_step = ""
 if args.method == 'V-PLM':
     html_config = VConfig(args.method, args.model_type, args.num_node_block, args.cnn_feature_dim,
                             **config.__dict__)
@@ -346,7 +337,9 @@ app = Flask(__name__)
 def infer():
     question = request.form['question']
     html_code = request.form['htmlCode']
-    answer, tag = evaluate(args, model, tokenizer, global_step, question, html_code)
+    metadata = request.form['metadata']
+    screenshot = request.form['screenshot']
+    answer, tag = evaluate(args, model, tokenizer, question, html_code)
     return json.dumps({'answer': answer, 'tag': tag})
 
 
