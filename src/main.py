@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import argparse
-import base64
+import csv
 import json
 import logging
 import os
@@ -10,7 +10,6 @@ import glob
 
 import numpy as np
 import torch
-from flask import Flask, request
 from torch.utils.data import (DataLoader, SequentialSampler)
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
@@ -331,20 +330,22 @@ else:
     model = AutoModelForQuestionAnswering.from_pretrained(checkpoint)
 model.to(args.device)
 
-app = Flask(__name__)
 
-
-@app.route('/infer', methods=['POST'])
-def infer():
-    html_code = request.form['htmlCode']
-    screenshot = request.form['screenshot']
-    metadata = request.form['metadata']
-    question = request.form['question']
-    with open('screenshot.png', 'wb') as file:
-        file.write(base64.b64decode(screenshot))
-    answer, tag = evaluate(args, model, tokenizer, question, html_code)
-    os.remove('screenshot.png')
-    return json.dumps({'answer': answer, 'tag': tag})
-
-
-app.run(host='0.0.0.0', port=9000)
+file_result = open('./result.txt', 'w')
+for root, _, filenames in os.walk('./dataset'):
+    for filename in filenames:
+        if filename != 'dataset.csv':
+            continue
+        with open(os.path.join(root, filename)) as file:
+            questions_info = list(csv.DictReader(file))
+        for question_info in questions_info:
+            page_id = question_info["id"][2:-5]
+            with open(os.path.join(root, 'processed_data', f'{page_id}.html')) as file:
+                html_code = file.read()
+            answer, tag = evaluate(args, model, tokenizer, question_info['question'], html_code)
+            file_result.write(json.dumps({
+                'id': question_info['id'],
+                'answer': answer,
+                'tag': tag
+            }) + '\n')
+file_result.close()

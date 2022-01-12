@@ -1,12 +1,9 @@
-import base64
 import collections
 import csv
 import json
 import os
 import re
 import string
-import time
-import urllib3
 from bs4 import BeautifulSoup
 
 
@@ -72,10 +69,18 @@ def get_pos_score(gold, addition, pred, html_code):
 
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-time.sleep(60)
-http = urllib3.PoolManager(timeout=10)
+result = {}
+with open('./result.txt', 'r') as file:
+    for line_text in file.read().split('\n'):
+        if len(line_text) == 0:
+            break
+        single_result = json.loads(line_text)
+        result[single_result['id']] = {
+            'answer': single_result['answer'],
+            'tag': single_result['tag']
+        }
 count_data, exact_score, f1_score, pos_score = 0, 0, 0, 0
-for root, _, filenames in os.walk('./data'):
+for root, _, filenames in os.walk('./answer'):
     for filename in filenames:
         if filename != 'dataset.csv':
             continue
@@ -83,26 +88,17 @@ for root, _, filenames in os.walk('./data'):
             questions_info = list(csv.DictReader(file))
         for question_info in questions_info:
             count_data += 1
-            page_id = question_info["id"][2:-5]
-            with open(os.path.join(root, 'processed_data', f'{page_id}.html')) as file:
+            with open(os.path.join(root, 'processed_data', f'{question_info["id"][2:-5]}.html')) as file:
                 html_code = file.read()
-            with open(os.path.join(root, 'processed_data', f'{page_id}.png'), 'rb') as file:
-                screenshot = base64.b64encode(file.read())
-            with open(os.path.join(root ,'processed_data', f'{page_id}.json')) as file:
-                metadata = file.read()
-            try:
-                response = http.request('POST', 'http://127.0.0.1:9000/infer', fields={
-                    'htmlCode': html_code,
-                    'screenshot': screenshot,
-                    'metadata': metadata,
-                    'question': question_info['question']
-                })
-            except:
-                continue
-            response = json.loads(response.data)
-            gold_answer = question_info['answer'] if normalize_answer(question_info['answer']) else ''
-            gold_tag = int(question_info['element_id'])
-            exact_score += get_exact_score(gold_answer, response['answer'])
-            f1_score += get_f1_score(gold_answer, response['answer'])
-            pos_score += get_pos_score(gold_tag, int(question_info['answer_start']), response['tag'], html_code)
-print(30 * exact_score / count_data + 40 * f1_score / count_data + 30 * pos_score / count_data)
+            gold_answer = question_info['answer']
+            gold_tag = int(question_info['tag'])
+            pred_answer = result[question_info['id']]['answer']
+            pred_tag = result[question_info['id']]['tag']
+            exact_score += get_exact_score(gold_answer, pred_answer)
+            f1_score += get_f1_score(gold_answer, pred_answer)
+            pos_score += get_pos_score(gold_tag, int(question_info['answer_start']), pred_tag, html_code)
+print(json.dumps({
+    'EM': 100 * exact_score / count_data,
+    'F1': 100 * f1_score / count_data,
+    'POS': 100 * pos_score / count_data
+}))
